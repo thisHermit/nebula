@@ -43,6 +43,7 @@ var crawlConfig = &config.Crawl{
 	KeepENR:          false,
 	CheckExposed:     false,
 	UDPRespTimeout:   3 * time.Second,
+	PersistNeighborsFormat: "json",
 }
 
 // CrawlCommand contains the crawl sub-command configuration.
@@ -146,6 +147,13 @@ var CrawlCommand = &cli.Command{
 			EnvVars:     []string{"NEBULA_CRAWL_NEIGHBORS"},
 			Value:       crawlConfig.PersistNeighbors,
 			Destination: &crawlConfig.PersistNeighbors,
+		},
+		&cli.StringFlag{
+			Name:        "neighbors-format",
+			Usage:       "Format of the export in persist neighbors.",
+			EnvVars:     []string{"NEBULA_CRAWL_NEIGHBORS_FORMAT"},
+			Value:       crawlConfig.PersistNeighborsFormat,
+			Destination: &crawlConfig.PersistNeighborsFormat,
 		},
 		&cli.StringFlag{
 			Name:        "addr-track-type",

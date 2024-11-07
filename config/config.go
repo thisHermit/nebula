@@ -264,6 +264,9 @@ type Crawl struct {
 	// Whether to persist all k-bucket entries
 	PersistNeighbors bool
 
+	// Format of the export in persist neighbors
+	PersistNeighborsFormat string
+
 	// File path to the udger datbase
 	FilePathUdgerDB string
 
