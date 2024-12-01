@@ -1,6 +1,6 @@
 # Integrating Bitcoin Network Support into Nebula Crawler
 
-This document outlines the challenges of adding support for the Bitcoin network to the Nebula crawler and provides a detailed list of the tasks required to achieve this integration.
+This document outlines the challenges of adding support for the Bitcoin network to the Nebula crawler and provides a detailed list of the tasks required to achieve this integration. Adding support for the Bitcoin network to the Nebula crawler involves several challenges due to differences in network protocols and message handling. By systematically implementing the tasks outlined below, these challenges can be overcome. The integration will enable Nebula to crawl and monitor the Bitcoin network effectively, providing valuable insights and extending its capabilities to support a wider range of networks.
 
 ## Challenges in Adding Bitcoin Support to Nebula
 
@@ -158,14 +158,12 @@ Address concerns related to new dependencies.
   - Keep dependencies updated to the latest stable versions.
   - Monitor for security advisories or important updates.
 
-- **Avoid Conflicts**
+- **Conflict resolution**
 
   - Ensure new dependencies do not conflict with existing packages in Nebula.
   - Resolve any namespace collisions or version mismatches promptly.
 
-### 8. Plan Timeline and Milestones
-
-Align the development process with upcoming deadlines.
+## Plan Timeline and Milestones
 
 - **By 20.01: Draft Presentation**
 
@@ -213,15 +211,3 @@ Align the development process with upcoming deadlines.
 
   - Update Nebula's documentation to include the Bitcoin crawler.
   - Provide usage instructions, configuration options, and troubleshooting guides.
-
-- **Community Engagement**
-
-  - Consider contributing back any improvements to the `btcsuite` project (by creating issues).
-
-## Conclusion
-
-Adding support for the Bitcoin network to the Nebula crawler involves several challenges due to differences in network protocols and message handling. By systematically implementing the tasks outlined above, these challenges can be overcome. The integration will enable Nebula to crawl and monitor the Bitcoin network effectively, providing valuable insights and extending its capabilities to support a wider range of networks.
-
----
-
-This document serves as a roadmap for integrating Bitcoin support into Nebula, detailing the challenges and the exact steps required to achieve this goal.
