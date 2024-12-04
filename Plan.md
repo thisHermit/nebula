@@ -1,6 +1,6 @@
 # Integrating Bitcoin Network Support into Nebula Crawler
 
-This document outlines the challenges of adding support for the Bitcoin network to the Nebula crawler and provides a detailed list of the tasks required to achieve this integration. Adding support for the Bitcoin network to the Nebula crawler involves several challenges due to differences in network protocols and message handling. By systematically implementing the tasks outlined below, these challenges can be overcome. The integration will enable Nebula to crawl and monitor the Bitcoin network effectively, providing valuable insights and extending its capabilities to support a wider range of networks.
+This document outlines the challenges of adding support for the Bitcoin network to the Nebula crawler and provides a detailed list of the tasks required to achieve this integration. Adding support for the Bitcoin network to the Nebula crawler involves several challenges due to differences in network protocols and message handling. By systematically implementing the tasks outlined below, these challenges can be overcome. The integration will enable Nebula to crawl the Bitcoin network (and bitcoin adjacent networks) effectively, providing valuable insights and extending its capabilities to support a wider range of networks.
 
 ## Challenges in Adding Bitcoin Support to Nebula
 
@@ -18,15 +18,7 @@ This document outlines the challenges of adding support for the Bitcoin network 
 
 4. **Updating the Command-Line Interface (CLI)**
 
-   Nebula's CLI must be updated to include options relevant to the Bitcoin network. This involves adding new flags, updating parsing logic, and ensuring seamless integration with existing sub-commands like `crawl` and `monitor`.
-
-5. **Testing and Validation**
-
-   Comprehensive testing is required to validate the functionality of the Bitcoin crawler. This includes unit tests, integration tests, and ensuring compatibility with Nebula's existing test suite.
-
-6. **Dependency Management**
-
-   Introducing new dependencies such as `btcsuite/btcd/wire` necessitates careful management to avoid compatibility or licensing issues. Aligning these dependencies with Nebula's architecture and licensing is important.
+   Nebula's CLI must be updated to include options relevant to the Bitcoin network. This involves adding new flags, updating parsing logic, and ensuring seamless integration with the existing `crawl` sub-command.
 
 ## Implementation Tasks
 
@@ -47,6 +39,10 @@ Implement the necessary interfaces to integrate the Bitcoin crawler into Nebula.
 - **`CrawlDriver`**
 
   - Implement the `CrawlDriver` interface for the Bitcoin network.
+  - Provide methods for starting the crawl, handling peer connections, sending and receiving messages, and gracefully shutting down the crawler.
+
+- `core/core.go`
+  - Implement the `Handler` and `WorkResult` interface for the Bitcoin network.
   - Provide methods for starting the crawl, handling peer connections, sending and receiving messages, and gracefully shutting down the crawler.
 
 ### 2. Add Placeholder Support for the Bitcoin Network
@@ -106,62 +102,24 @@ Leverage the existing Bitcoin protocol implementation in Go.
   - Configure the crawler to use correct network magic numbers for mainnet, testnet, or regtest.
   - Ensure messages are correctly identified and routed based on these magic numbers.
 
-### 5. Update Nebula's Architecture for Bitcoin Support
+### 5. Implement the basic Bitcoin network crawler
 
-Modify Nebula's architecture to accommodate Bitcoin's requirements.
+Follow up on task 2 by crawling the bitcoin nodes and visiting the peers.
 
-- **Concurrency Management**
+- **DNS**
 
-  - Utilize Go's concurrency features to handle multiple peer connections efficiently.
-  - Implement connection pools or worker patterns as necessary.
+  - Current implementation at [btc-crawl](https://github.com/shazow/btc-crawl) uses dns entries that are converted to seeds.
+  - This implementation needs to be translated to the nebula format.
 
-- **Data Storage and Retrieval**
+- **Peer crawl**
 
-  - Decide on a storage mechanism for crawled data (in-memory, databases, or files).
-  - Implement efficient data structures for storing peer information and network topology.
+  - The current [btc-crawl](https://github.com/shazow/btc-crawl) implementation already performs the peer crawl.
+  - Btc crawl uses ip and port pairs instead of multi-addresses. This needs to be translated.
+  - The bitcoin driver needs to be written to perform this crawl action, including the handshake and connection.
 
-- **Logging and Monitoring**
+- **Logging**
 
-  - Enhance logging to include Bitcoin-specific events and errors.
-  - Integrate with Nebula's monitoring tools to visualize Bitcoin network activity.
-
-### 6. Expand Testing Suite
-
-Ensure the Bitcoin crawler is thoroughly tested.
-
-- **Unit Tests**
-
-  - Write tests for individual functions and methods within the Bitcoin crawler.
-  - Test message parsing, connection handling, and error conditions comprehensively.
-
-- **Integration Tests**
-
-  - Set up tests that run the crawler against known Bitcoin nodes.
-  - Verify successful connection, message exchange, and peer information retrieval.
-
-- **Mock Testing**
-
-  - Use mock servers or simulated peers to test edge cases and failure scenarios.
-  - Ensure correct crawler behavior under various network conditions.
-
-### 7. Manage Dependencies and Licensing
-
-Address concerns related to new dependencies.
-
-- **Review Licenses**
-
-  - Verify that `btcsuite/btcd/wire` and other dependencies are compatible with Nebula's license.
-  - Document any licensing requirements or necessary attributions.
-
-- **Dependency Updates**
-
-  - Keep dependencies updated to the latest stable versions.
-  - Monitor for security advisories or important updates.
-
-- **Conflict resolution**
-
-  - Ensure new dependencies do not conflict with existing packages in Nebula.
-  - Resolve any namespace collisions or version mismatches promptly.
+  - Add logging to include Bitcoin-specific events and errors and to ensure ease of development.
 
 ## Plan Timeline and Milestones
 
@@ -196,11 +154,6 @@ Address concerns related to new dependencies.
 
   - Implement peer discovery using `getaddr` and `addr` messages.
   - Consider seeding the crawler with known peers or utilizing DNS seeds.
-
-- **Resource Management**
-
-  - Monitor and manage resource usage, including memory and network bandwidth.
-  - Implement rate limiting or connection throttling if necessary.
 
 - **Security Practices**
 
