@@ -105,6 +105,7 @@ Leverage the existing Bitcoin protocol implementation in Go.
 ### 5. Implement the basic Bitcoin network crawler
 
 Follow up on task 2 by crawling the bitcoin nodes and visiting the peers.
+This is the main task of this project.
 
 - **DNS**
 
