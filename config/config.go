@@ -39,6 +39,7 @@ const (
 	NetworkAvailTuringLC  Network = "AVAIL_TURING_LC"
 	NetworkAvailTuringFN  Network = "AVAIL_TURING_FN"
 	NetworkPactus         Network = "PACTUS"
+	NetworkBitcoin        Network = "BITCOIN"
 )
 
 func Networks() []Network {
@@ -62,6 +63,7 @@ func Networks() []Network {
 		NetworkAvailTuringLC,
 		NetworkAvailTuringFN,
 		NetworkPactus,
+		NetworkBitcoin,
 	}
 }
 
@@ -345,6 +347,59 @@ func (c *Crawl) BootstrapEnodesV4() ([]*enode.Node, error) {
 	return enodes, nil
 }
 
+func (c *Crawl) BootstrapBitcoinEntries() ([]ma.Multiaddr, error) {
+
+	// go func(dnsSeeds []string) []string {
+	// 	wait := sync.WaitGroup{}
+	// 	results := make(chan []net.IP)
+
+	// 	for _, seed := range dnsSeeds {
+	// 		wait.Add(1)
+	// 		go func(address string) {
+	// 			defer wait.Done()
+	// 			ips, err := net.LookupIP(address)
+	// 			if err != nil {
+	// 				logger.Warningf("Failed to resolve %s: %v", address, err)
+	// 				return
+	// 			}
+	// 			logger.Debugf("Resolved %d seeds from %s.", len(ips), address)
+	// 			results <- ips
+	// 		}(seed)
+	// 	}
+
+	// 	go func() {
+	// 		wait.Wait()
+	// 		close(results)
+	// 	}()
+
+	// 	seeds := []string{}
+	// 	for ips := range results {
+	// 		for _, ip := range ips {
+	// 			seeds = append(seeds, net.JoinHostPort(ip.String(), chaincfg.MainNetParams.DefaultPort))
+	// 		}
+	// 	}
+
+	// 	logger.Infof("Resolved %d seed nodes from %d DNS seeds.", len(seeds), len(dnsSeeds))
+
+	// 	// Note that this will likely include duplicate seeds. The crawler deduplicates them.
+	// 	return seeds
+	// }()
+
+	addrInfos := make([]ma.Multiaddr, 0, len(c.BootstrapPeers.Value()))
+
+	for _, maddrStr := range c.BootstrapPeers.Value() {
+		maddr, err := ma.NewMultiaddr(maddrStr)
+		if err != nil {
+			return nil, fmt.Errorf("parse multiaddress %s: %w", maddrStr, err)
+		}
+
+		// Directly append to the slice
+		addrInfos = append(addrInfos, maddr)
+	}
+
+	return addrInfos, nil
+}
+
 func (c *Crawl) BootstrapEnodesV5() ([]*enode.Node, error) {
 	nodesMap := map[enode.ID]*enode.Node{}
 	for _, enr := range c.BootstrapPeers.Value() {
@@ -434,6 +489,9 @@ func ConfigureNetwork(network string) (*cli.StringSlice, *cli.StringSlice, error
 	case NetworkPactus:
 		bootstrapPeers = cli.NewStringSlice(BootstrapPeersPactusFullNode...)
 		protocols = cli.NewStringSlice("/pactus/gossip/v1/kad/1.0.0")
+	case NetworkBitcoin:
+		bootstrapPeers = cli.NewStringSlice(BootstrapPeersBitcoinFullNode...)
+		protocols = cli.NewStringSlice("bitcoin")
 	default:
 		return nil, nil, fmt.Errorf("unknown network identifier: %s", network)
 	}
