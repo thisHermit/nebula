@@ -3,20 +3,24 @@ package bitcoin
 import (
 	"context"
 	"encoding/json"
+	"net"
 
 	// "errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcd/wire"
 	"github.com/cenkalti/backoff/v4"
-	"github.com/ethereum/go-ethereum/p2p/discover"
+
+	// "github.com/ltcsuite/ltcd/wire"
+
 	// "github.com/ethereum/go-ethereum/p2p/enode"
-	"github.com/libp2p/go-libp2p/core/network"
+
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/peerstore"
-	basichost "github.com/libp2p/go-libp2p/p2p/host/basic"
+	// "github.com/libp2p/go-libp2p/core/peerstore"
 	ma "github.com/multiformats/go-multiaddr"
+	manet "github.com/multiformats/go-multiaddr/net"
 	log "github.com/sirupsen/logrus"
 
 	// "go.uber.org/atomic"
@@ -39,8 +43,7 @@ type CrawlerConfig struct {
 type Crawler struct {
 	id           string
 	cfg          *CrawlerConfig
-	host         *basichost.BasicHost
-	listener     *discover.UDPv5
+	conn         net.Conn
 	crawledPeers int
 	done         chan struct{}
 }
@@ -53,7 +56,7 @@ func (c *Crawler) Work(ctx context.Context, task PeerInfo) (core.CrawlResult[Pee
 		"remoteID":   task.ID().ShortString(),
 		"crawlCount": c.crawledPeers,
 	})
-	logEntry.Debugln("Crawling peer")
+	println("Crawling peer")
 	defer logEntry.Debugln("Crawled peer")
 
 	crawlStart := time.Now()
@@ -166,47 +169,48 @@ func (c *Crawler) crawlBitcoin(ctx context.Context, pi PeerInfo) chan BitcoinRes
 			Addrs: sanitizedAddrs,
 		}
 
-		var conn network.Conn
+		var conn net.Conn
 		result.ConnectStartTime = time.Now()
 		conn, result.ConnectError = c.connect(ctx, addrInfo) // use filtered addr list
+		c.conn = conn
 		result.ConnectEndTime = time.Now()
 
 		// If we could successfully connect to the peer we actually crawl it.
 		if result.ConnectError == nil {
 
 			// keep track of the transport of the open connection
-			result.Transport = conn.ConnState().Transport
+			result.Transport = "tcp"
 
 			// wait for the Identify exchange to complete (no-op if already done)
 			// the internal timeout is set to 30 s. When crawling we only allow 5s.
-			timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
+			// timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			// defer cancel()
 
-			select {
-			case <-timeoutCtx.Done():
-				// identification timed out.
-			case <-c.host.IDService().IdentifyWait(conn):
-				// identification may have succeeded.
-			}
+			// select {
+			// case <-timeoutCtx.Done():
+			// 	// identification timed out.
+			// case <-c.host.IDService().IdentifyWait(conn):
+			// 	// identification may have succeeded.
+			// }
 
 			// Extract information from peer store
-			ps := c.host.Peerstore()
+			// ps := conn.
 
-			// Extract agent
-			if agent, err := ps.Get(pi.ID(), "AgentVersion"); err == nil {
-				result.Agent = agent.(string)
-			}
+			// // Extract agent
+			// if agent, err := ps.Get(pi.ID(), "AgentVersion"); err == nil {
+			// 	result.Agent = agent.(string)
+			// }
 
-			// Extract protocols
-			if protocols, err := ps.GetProtocols(pi.ID()); err == nil {
-				result.Protocols = make([]string, len(protocols))
-				for i := range protocols {
-					result.Protocols[i] = string(protocols[i])
-				}
-			}
+			// // Extract protocols
+			// if protocols, err := ps.GetProtocols(pi.ID()); err == nil {
+			// 	result.Protocols = make([]string, len(protocols))
+			// 	for i := range protocols {
+			// 		result.Protocols[i] = string(protocols[i])
+			// 	}
+			// }
 
 			// Extract listen addresses
-			result.ListenAddrs = ps.Addrs(pi.ID())
+			// result.ListenAddrs = ps.Addrs(pi.ID())
 		} else {
 			result.Error = result.ConnectError
 		}
@@ -221,15 +225,15 @@ func (c *Crawler) crawlBitcoin(ctx context.Context, pi PeerInfo) chan BitcoinRes
 		// if there was a connection error, parse it to a known one
 		if result.ConnectError != nil {
 			result.ConnectErrorStr = db.NetError(result.ConnectError)
+		} else {
+			// Free connection resources
+			if err := c.conn.Close(); err != nil {
+				log.WithError(err).WithField("remoteID", pi.ID().ShortString()).Warnln("Could not close connection to peer")
+			}
 		}
 
 		if result.Error != nil {
 			result.ErrorStr = db.NetError(result.Error)
-		}
-
-		// Free connection resources
-		if err := c.host.Network().ClosePeer(pi.ID()); err != nil {
-			log.WithError(err).WithField("remoteID", pi.ID().ShortString()).Warnln("Could not close connection to peer")
 		}
 
 		// send the result back and close channel
@@ -244,12 +248,90 @@ func (c *Crawler) crawlBitcoin(ctx context.Context, pi PeerInfo) chan BitcoinRes
 	return resultCh
 }
 
+type BitcoinNodeResult struct {
+	ProtocolVersion int32
+	UserAgent       string
+	pver            uint32
+}
+
+func (c *Crawler) Handshake() (BitcoinNodeResult, error) {
+	result := BitcoinNodeResult{}
+	if c.conn == nil {
+		return result, fmt.Errorf("Peer is not connected, can't handshake.")
+	}
+
+	log.WithField("Address", c.conn.RemoteAddr()).Debug("[%s] Starting handshake.")
+
+	nonce, err := wire.RandomUint64()
+	if err != nil {
+		return result, err
+	}
+
+	localAddr := &wire.NetAddress{
+		IP:   c.conn.LocalAddr().(*net.TCPAddr).IP,
+		Port: uint16(c.conn.LocalAddr().(*net.TCPAddr).Port),
+	}
+	remoteAddr := &wire.NetAddress{
+		IP:   c.conn.RemoteAddr().(*net.TCPAddr).IP,
+		Port: uint16(c.conn.RemoteAddr().(*net.TCPAddr).Port),
+	}
+
+	msgVersion := wire.NewMsgVersion(localAddr, remoteAddr, nonce, 0)
+
+	// msgVersion := wire.NewMsgVersion(p.conn.LocalAddr(), p.conn.RemoteAddr(), p.nonce, 0)
+	msgVersion.UserAgent = "nebula/"
+	msgVersion.DisableRelayTx = true
+	if err := c.WriteMessage(msgVersion); err != nil {
+		return result, err
+	}
+
+	// Read the response version.
+	msg, _, err := c.ReadMessage()
+	if err != nil {
+		return result, err
+	}
+	vmsg, ok := msg.(*wire.MsgVersion)
+	if !ok {
+		return result, fmt.Errorf("Did not receive version message: %T", vmsg)
+	}
+
+	result.ProtocolVersion = vmsg.ProtocolVersion
+	result.UserAgent = vmsg.UserAgent
+
+	// Negotiate protocol version.
+	if uint32(vmsg.ProtocolVersion) < wire.ProtocolVersion {
+		result.pver = uint32(vmsg.ProtocolVersion)
+	}
+	log.Debugf("[%s] -> Version: %s", c.conn.RemoteAddr(), vmsg.UserAgent)
+
+	// Normally we'd check if vmsg.Nonce == p.nonce but the crawler does not
+	// accept external connections so we skip it.
+
+	// Send verack.
+	if err := c.WriteMessage(wire.NewMsgVerAck()); err != nil {
+		return result, err
+	}
+
+	return result, nil
+}
+
+func (c *Crawler) WriteMessage(msg wire.Message) error {
+	return wire.WriteMessage(c.conn, msg, wire.ProtocolVersion, wire.MainNet)
+}
+
+func (c *Crawler) ReadMessage() (wire.Message, []byte, error) {
+	return wire.ReadMessage(c.conn, wire.ProtocolVersion, wire.MainNet)
+}
+
 // connect establishes a connection to the given peer. It also handles metric capturing.
-func (c *Crawler) connect(ctx context.Context, pi peer.AddrInfo) (network.Conn, error) {
+func (c *Crawler) connect(ctx context.Context, pi peer.AddrInfo) (net.Conn, error) {
 	if len(pi.Addrs) == 0 {
 		return nil, fmt.Errorf("skipping node as it has no public IP address") // change knownErrs map if changing this msg
 	}
-
+	println("===========connect=============")
+	println("===============================")
+	println("===============================")
+	println("===============================")
 	// init an exponential backoff
 	bo := backoff.NewExponentialBackOff()
 	bo.InitialInterval = time.Second
@@ -268,11 +350,12 @@ func (c *Crawler) connect(ctx context.Context, pi peer.AddrInfo) (network.Conn, 
 		logEntry.Debugln("Connecting to peer", pi.ID.ShortString())
 
 		// save addresses into the peer store temporarily
-		c.host.Peerstore().AddAddrs(pi.ID, pi.Addrs, peerstore.TempAddrTTL)
 
-		timeoutCtx, cancel := context.WithTimeout(ctx, c.cfg.DialTimeout)
-		conn, err := c.host.Network().DialPeer(timeoutCtx, pi.ID)
-		cancel()
+		// conn, err := c.host.Network().DialPeer(timeoutCtx, pi.ID)
+		netAddr, err := manet.ToNetAddr(pi.Addrs[0])
+
+		pi.Addrs[0].ValueForProtocol(ma.P_IP4)
+		conn, err := net.DialTimeout(netAddr.Network(), netAddr.String(), c.cfg.DialTimeout)
 
 		if err == nil {
 			return conn, nil
