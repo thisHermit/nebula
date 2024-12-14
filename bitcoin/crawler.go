@@ -3,7 +3,9 @@ package bitcoin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
+	"strconv"
 
 	// "errors"
 	"fmt"
@@ -174,6 +176,7 @@ func (c *Crawler) crawlBitcoin(ctx context.Context, pi PeerInfo) chan BitcoinRes
 		conn, result.ConnectError = c.connect(ctx, addrInfo) // use filtered addr list
 		c.conn = conn
 		result.ConnectEndTime = time.Now()
+		neighbours := []PeerInfo{}
 
 		// If we could successfully connect to the peer we actually crawl it.
 		if result.ConnectError == nil {
@@ -181,43 +184,80 @@ func (c *Crawler) crawlBitcoin(ctx context.Context, pi PeerInfo) chan BitcoinRes
 			// keep track of the transport of the open connection
 			result.Transport = "tcp"
 
-			// wait for the Identify exchange to complete (no-op if already done)
-			// the internal timeout is set to 30 s. When crawling we only allow 5s.
-			// timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			// defer cancel()
+			peers, err := getPeers_btcd(conn, 0)
+			if err == nil {
+				neighbours = append(neighbours, func() []PeerInfo {
+					mapped := make([]PeerInfo, len(peers))
+					for i, maddr := range peers {
+						mapped[i] = PeerInfo{
+							AddrInfo: AddrInfo{
+								id:   maddr.String(),
+								Addr: []ma.Multiaddr{maddr},
+							},
+						}
+					}
+					return mapped
+				}()...)
+			}
 
-			// select {
-			// case <-timeoutCtx.Done():
-			// 	// identification timed out.
-			// case <-c.host.IDService().IdentifyWait(conn):
-			// 	// identification may have succeeded.
-			// }
+			// firstReceived := -1
+			// tolerateMessages := 3
+			// otherMessages := []string{}
+			// for {
+			// 	// We can't really tell when we're done receiving peers, so we stop either
+			// 	// when we get a smaller-than-normal set size or when we've received too
+			// 	// many unrelated messages.
+			// 	if len(otherMessages) > tolerateMessages {
+			// 		log.WithField("address", addrInfo).WithField("num_peers", len(neighbours)).Debugf("[%s] Giving up with %d results after tolerating messages: %v.", otherMessages)
+			// 		break
+			// 	}
 
-			// Extract information from peer store
-			// ps := conn.
+			// 	msg, _, err := c.ReadMessage()
+			// 	if err != nil {
+			// 		otherMessages = append(otherMessages, err.Error())
+			// 		log.WithField("address", addrInfo).WithField("num_peers", len(neighbours)).Warningf("[%s] Giving up with %d results after tolerating messages: %v.", err)
+			// 		continue
+			// 	}
 
-			// // Extract agent
-			// if agent, err := ps.Get(pi.ID(), "AgentVersion"); err == nil {
-			// 	result.Agent = agent.(string)
-			// }
+			// 	switch tmsg := msg.(type) {
+			// 	case *wire.MsgAddr:
+			// 		// neighbours = append(neighbours, tmsg.AddrList...)
+			// 		neighbours = append(neighbours, func() []PeerInfo {
+			// 			mapped := make([]PeerInfo, len(tmsg.AddrList))
+			// 			for i, addr := range tmsg.AddrList {
+			// 				maStr := fmt.Sprintf("/ip4/%s/tcp/%d", addr.IP.String(), addr.Port)
+			// 				maddr, err := ma.NewMultiaddr(maStr)
+			// 				if err != nil {
+			// 					continue // Skip invalid addresses
+			// 				}
 
-			// // Extract protocols
-			// if protocols, err := ps.GetProtocols(pi.ID()); err == nil {
-			// 	result.Protocols = make([]string, len(protocols))
-			// 	for i := range protocols {
-			// 		result.Protocols[i] = string(protocols[i])
+			// 				mapped[i] = PeerInfo{
+			// 					AddrInfo: AddrInfo{
+			// 						id:   maddr.String(),
+			// 						Addr: []ma.Multiaddr{maddr},
+			// 					},
+			// 				}
+			// 			}
+			// 			return mapped
+			// 		}()...)
+
+			// 		if firstReceived == -1 {
+			// 			firstReceived = len(tmsg.AddrList)
+			// 		} else if firstReceived > len(tmsg.AddrList) || firstReceived == 0 {
+			// 			// Probably done.
+			// 			break
+			// 		}
+			// 	default:
+			// 		otherMessages = append(otherMessages, tmsg.Command())
 			// 	}
 			// }
-
-			// Extract listen addresses
-			// result.ListenAddrs = ps.Addrs(pi.ID())
 		} else {
 			result.Error = result.ConnectError
 		}
 
 		result.RoutingTable = &core.RoutingTable[PeerInfo]{
 			PeerID:    pi.ID(),
-			Neighbors: []PeerInfo{},
+			Neighbors: neighbours,
 			ErrorBits: uint16(0), // FIXME
 			Error:     result.Error,
 		}
@@ -328,10 +368,10 @@ func (c *Crawler) connect(ctx context.Context, pi peer.AddrInfo) (net.Conn, erro
 	if len(pi.Addrs) == 0 {
 		return nil, fmt.Errorf("skipping node as it has no public IP address") // change knownErrs map if changing this msg
 	}
-	println("===========connect=============")
-	println("===============================")
-	println("===============================")
-	println("===============================")
+	// println("===========connect=============")
+	// println("===============================")
+	// println("===============================")
+	// println("===============================")
 	// init an exponential backoff
 	bo := backoff.NewExponentialBackOff()
 	bo.InitialInterval = time.Second
@@ -454,6 +494,220 @@ func sanitizeAddrs(maddrs []ma.Multiaddr) ([]ma.Multiaddr, bool) {
 	}
 
 	return maddrs, false
+}
+
+func getPeers_btcd(conn net.Conn, verbosity int) ([]ma.Multiaddr, error) {
+
+	// Try multiple times to get peers
+	maxRetry := 10
+	for i := 0; i < maxRetry; i++ {
+
+		// Exchange version message
+		resp := versionMsg_btcd(conn, conn.RemoteAddr())
+		switch resp.(type) {
+		case *wire.MsgVersion:
+			resp = verackMsg_btcd(conn)
+			switch msg := resp.(type) {
+			case *wire.MsgVerAck:
+				// Send a getaddr message to the node
+				resp = getAddr_btcd(conn)
+
+				switch msg := resp.(type) {
+				case *wire.MsgAddr:
+					// Convert addresses to multiaddrs and return them
+					maddrs, err := savePeerTable_btcd(msg)
+					if err != nil {
+						return nil, err
+					}
+					return maddrs, nil
+				default:
+					if verbosity >= 3 {
+						fmt.Printf("Received unknown message type %T\n", resp)
+					}
+				}
+			default:
+				if verbosity >= 3 {
+					fmt.Printf("Received unknown message type %T\n", msg)
+				}
+			}
+		}
+	}
+
+	return nil, errors.New("failed to get peers after max retries")
+}
+
+func savePeerTable_btcd(msg *wire.MsgAddr) ([]ma.Multiaddr, error) {
+	var maddrs []ma.Multiaddr
+
+	for _, addr := range msg.AddrList {
+		// Determine if it's IPv4 or IPv6
+		var protocol string
+		if addr.IP.To4() != nil {
+			protocol = "ip4"
+		} else {
+			protocol = "ip6"
+		}
+
+		// Construct the multiaddr string
+		maStr := fmt.Sprintf("/%s/%s/tcp/%d", protocol, addr.IP.String(), addr.Port)
+		maddr, err := ma.NewMultiaddr(maStr)
+		if err != nil {
+			// Return an error if multiaddr creation fails
+			return nil, fmt.Errorf("failed to create multiaddr from %s: %w", maStr, err)
+		}
+
+		maddrs = append(maddrs, maddr)
+	}
+
+	return maddrs, nil
+}
+
+func versionMsg_btcd(conn net.Conn, addr net.Addr) wire.Message {
+	host, portStr, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		// Handle error as needed
+		return nil
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		// Handle error as needed
+		return nil
+	}
+	var localIP string
+	maxRetry := 10
+	timeout := time.Duration(5) * time.Second
+	verbosity := 3
+	// secret := 0xe8f3e1e3
+	var defaultPort uint16 = 8333
+
+	localIP = "::1"
+
+	versionMsg := wire.NewMsgVersion(
+		wire.NewNetAddressIPPort(net.ParseIP(localIP), defaultPort, wire.SFNodeNetwork),
+		wire.NewNetAddressIPPort(net.ParseIP(host), uint16(port), wire.SFNodeNetwork),
+		12345,
+		0,
+	)
+	versionMsg.ProtocolVersion = int32(wire.ProtocolVersion)
+	versionMsg.Services = wire.SFNodeNetwork
+	versionMsg.Timestamp = time.Now()
+	versionMsg.UserAgent = "/crawler:0.1/"
+
+	var resp wire.Message
+
+	for i := 0; i <= maxRetry; i++ {
+		startTime := time.Now()
+
+		err = wire.WriteMessage(conn, versionMsg, wire.ProtocolVersion, wire.MainNet)
+		if err != nil {
+			if verbosity >= 3 {
+				fmt.Println("Error sending version message:", err)
+			}
+			continue
+		}
+
+		for j := 0; j <= maxRetry; j++ {
+			if time.Since(startTime) > timeout {
+				if verbosity >= 3 {
+					fmt.Println("Timeout exceeded while waiting for version message")
+				}
+				break
+			}
+
+			resp, _, err = wire.ReadMessage(conn, wire.ProtocolVersion, wire.MainNet)
+			if err != nil {
+				// if verbosity >= 3 {
+				// 	fmt.Println("Error reading version message:", err)
+				// }
+				continue
+			}
+			if _, ok := resp.(*wire.MsgVersion); ok {
+				return resp
+			}
+		}
+
+	}
+	return nil
+}
+
+func verackMsg_btcd(conn net.Conn) wire.Message {
+	var resp wire.Message
+	var err error
+	maxRetry := 10
+	timeout := time.Duration(5) * time.Second
+	verbosity := 3
+	// secret := 0xe8f3e1e3
+
+	for i := 0; i <= maxRetry; i++ {
+		startTime := time.Now()
+
+		verackMsg := wire.NewMsgVerAck()
+		err = wire.WriteMessage(conn, verackMsg, wire.ProtocolVersion, wire.MainNet)
+		if err != nil {
+			if verbosity >= 3 {
+				fmt.Println("Error sending verack message:", err)
+			}
+			continue
+		}
+
+		for {
+			if time.Since(startTime) > timeout {
+				if verbosity >= 3 {
+					fmt.Println("Timeout exceeded while waiting for verack message")
+				}
+				break
+			}
+
+			resp, _, err = wire.ReadMessage(conn, wire.ProtocolVersion, wire.MainNet)
+			if err != nil {
+				if verbosity >= 3 {
+					fmt.Println("Error reading verack message:", err)
+				}
+				break
+			}
+			if _, ok := resp.(*wire.MsgVerAck); ok {
+				return resp
+			}
+		}
+	}
+	return nil
+}
+
+func getAddr_btcd(conn net.Conn) wire.Message {
+	var resp wire.Message
+	var err error
+	maxRetry := 10
+	timeout := time.Duration(5) * time.Second
+
+	// secret := 0xe8f3e1e3
+
+	for i := 0; i <= maxRetry; i++ {
+		startTime := time.Now()
+
+		getAddrMsg := wire.NewMsgGetAddr()
+		err = wire.WriteMessage(conn, getAddrMsg, wire.ProtocolVersion, wire.MainNet)
+		if err != nil {
+			fmt.Println("Error sending getAddr message:", err)
+			continue
+		}
+
+		for {
+			if time.Since(startTime) > timeout {
+				fmt.Println("Timeout exceeded while waiting for getAddr message")
+				break
+			}
+
+			resp, _, err = wire.ReadMessage(conn, wire.ProtocolVersion, wire.MainNet)
+			if err != nil {
+				fmt.Println("Error reading getAddr message:", err)
+				break
+			}
+			if _, ok := resp.(*wire.MsgAddr); ok {
+				return resp
+			}
+		}
+	}
+	return nil
 }
 
 // func (c *Crawler) crawlDiscV5(ctx context.Context, pi PeerInfo) chan DiscV5Result {
