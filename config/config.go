@@ -3,11 +3,14 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	kaddht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -347,21 +350,71 @@ func (c *Crawl) BootstrapEnodesV4() ([]*enode.Node, error) {
 	return enodes, nil
 }
 
-func (c *Crawl) BootstrapBitcoinEntries() ([]ma.Multiaddr, error) {
+func GetSeedsFromDNS(dnsSeeds []string) []string {
+	wait := sync.WaitGroup{}
+	results := make(chan []net.IP)
 
-	addrInfos := make([]ma.Multiaddr, 0, len(c.BootstrapPeers.Value()))
+	for _, seed := range dnsSeeds {
+		wait.Add(1)
+		go func(address string) {
+			defer wait.Done()
+			ips, err := net.LookupIP(address)
+			if err != nil {
+				return
+			}
+			results <- ips
+		}(seed)
+	}
 
-	for _, maddrStr := range c.BootstrapPeers.Value() {
-		maddr, err := ma.NewMultiaddr(maddrStr)
-		if err != nil {
-			return nil, fmt.Errorf("parse multiaddress %s: %w", maddrStr, err)
+	go func() {
+		wait.Wait()
+		close(results)
+	}()
+
+	seeds := []string{}
+	for ips := range results {
+		for _, ip := range ips {
+			seeds = append(seeds, net.JoinHostPort(ip.String(), chaincfg.MainNetParams.DefaultPort))
 		}
+	}
+
+	// Note that this will likely include duplicate seeds. The crawler deduplicates them.
+	return seeds
+}
+
+func (c *Crawl) BootstrapBitcoinEntries() ([]ma.Multiaddr, error) {
+	addresses := GetSeedsFromDNS(c.BootstrapPeers.Value())
+	addrInfos := make([]ma.Multiaddr, 0, len(addresses))
+
+	for _, addr := range addresses {
+		maddr := toMultiAddr(addr)
+		// if err != nil {
+		// 	return nil, fmt.Errorf("parse multiaddress %s: %w", maddrStr, err)
+		// }
 
 		// Directly append to the slice
-		addrInfos = append(addrInfos, maddr)
+		if maddr != nil {
+			addrInfos = append(addrInfos, maddr)
+		}
 	}
 
 	return addrInfos, nil
+}
+
+func toMultiAddr(addr string) ma.Multiaddr {
+
+	ip_type := "4"
+	if addr[0] == '[' {
+		ip_type = "6"
+	}
+
+	parts := strings.Split(addr, ":")
+	ip_addr := strings.Join(parts[:len(parts)-1], ":")
+	port := parts[len(parts)-1]
+
+	address := fmt.Sprintf("/ip%s/%s/tcp/%s", ip_type, ip_addr, port)
+	multiAddr, _ := ma.NewMultiaddr(address)
+	return multiAddr
 }
 
 func (c *Crawl) BootstrapEnodesV5() ([]*enode.Node, error) {

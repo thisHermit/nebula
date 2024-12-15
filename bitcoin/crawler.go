@@ -58,7 +58,7 @@ func (c *Crawler) Work(ctx context.Context, task PeerInfo) (core.CrawlResult[Pee
 		"remoteID":   task.ID().ShortString(),
 		"crawlCount": c.crawledPeers,
 	})
-	println("Crawling peer")
+	// println("Crawling peer")
 	defer logEntry.Debugln("Crawled peer")
 
 	crawlStart := time.Now()
@@ -143,6 +143,7 @@ type BitcoinResult struct {
 	ConnectError          error
 	ConnectErrorStr       string
 	Agent                 string
+	ProtocolVersion       int32
 	Protocols             []string
 	ListenAddrs           []ma.Multiaddr
 	Transport             string // the transport of a successful connection
@@ -176,83 +177,121 @@ func (c *Crawler) crawlBitcoin(ctx context.Context, pi PeerInfo) chan BitcoinRes
 		conn, result.ConnectError = c.connect(ctx, addrInfo) // use filtered addr list
 		c.conn = conn
 		result.ConnectEndTime = time.Now()
-		neighbours := []PeerInfo{}
+
+		neighbours := make([]PeerInfo, 0, 50)
 
 		// If we could successfully connect to the peer we actually crawl it.
 		if result.ConnectError == nil {
 
+			nodeRes, err := c.Handshake()
+			result.Agent = nodeRes.UserAgent
+			result.ProtocolVersion = nodeRes.ProtocolVersion
+			if err != nil {
+				log.Debugf("[%s] Handsake failed: %v", sanitizedAddrs, err)
+			}
+
+			err = c.WriteMessage(wire.NewMsgGetAddr())
+			if err != nil {
+				log.Warningf("[%s] GetAddr failed: %v", sanitizedAddrs, err)
+			}
+
 			// keep track of the transport of the open connection
 			result.Transport = "tcp"
 
-			peers, err := getPeers_btcd(conn, 0)
-			if err == nil {
-				neighbours = append(neighbours, func() []PeerInfo {
-					mapped := make([]PeerInfo, len(peers))
-					for i, maddr := range peers {
-						mapped[i] = PeerInfo{
-							AddrInfo: AddrInfo{
-								id:   maddr.String(),
-								Addr: []ma.Multiaddr{maddr},
-							},
-						}
-					}
-					return mapped
-				}()...)
-			}
-
-			// firstReceived := -1
-			// tolerateMessages := 3
-			// otherMessages := []string{}
-			// for {
-			// 	// We can't really tell when we're done receiving peers, so we stop either
-			// 	// when we get a smaller-than-normal set size or when we've received too
-			// 	// many unrelated messages.
-			// 	if len(otherMessages) > tolerateMessages {
-			// 		log.WithField("address", addrInfo).WithField("num_peers", len(neighbours)).Debugf("[%s] Giving up with %d results after tolerating messages: %v.", otherMessages)
-			// 		break
-			// 	}
-
-			// 	msg, _, err := c.ReadMessage()
-			// 	if err != nil {
-			// 		otherMessages = append(otherMessages, err.Error())
-			// 		log.WithField("address", addrInfo).WithField("num_peers", len(neighbours)).Warningf("[%s] Giving up with %d results after tolerating messages: %v.", err)
-			// 		continue
-			// 	}
-
-			// 	switch tmsg := msg.(type) {
-			// 	case *wire.MsgAddr:
-			// 		// neighbours = append(neighbours, tmsg.AddrList...)
-			// 		neighbours = append(neighbours, func() []PeerInfo {
-			// 			mapped := make([]PeerInfo, len(tmsg.AddrList))
-			// 			for i, addr := range tmsg.AddrList {
-			// 				maStr := fmt.Sprintf("/ip4/%s/tcp/%d", addr.IP.String(), addr.Port)
-			// 				maddr, err := ma.NewMultiaddr(maStr)
-			// 				if err != nil {
-			// 					continue // Skip invalid addresses
-			// 				}
-
-			// 				mapped[i] = PeerInfo{
-			// 					AddrInfo: AddrInfo{
-			// 						id:   maddr.String(),
-			// 						Addr: []ma.Multiaddr{maddr},
-			// 					},
-			// 				}
+			// peers, err := getPeers_btcd(conn, 0)
+			// if err == nil {
+			// 	neighbours = append(neighbours, func() []PeerInfo {
+			// 		mapped := make([]PeerInfo, len(peers))
+			// 		for i, maddr := range peers {
+			// 			mapped[i] = PeerInfo{
+			// 				AddrInfo: AddrInfo{
+			// 					id:   maddr.String(),
+			// 					Addr: []ma.Multiaddr{maddr},
+			// 				},
 			// 			}
-			// 			return mapped
-			// 		}()...)
-
-			// 		if firstReceived == -1 {
-			// 			firstReceived = len(tmsg.AddrList)
-			// 		} else if firstReceived > len(tmsg.AddrList) || firstReceived == 0 {
-			// 			// Probably done.
-			// 			break
 			// 		}
-			// 	default:
-			// 		otherMessages = append(otherMessages, tmsg.Command())
-			// 	}
+			// 		return mapped
+			// 	}()...)
 			// }
+
+			firstReceived := -1
+			tolerateMessages := 5
+			otherMessages := []string{}
+			for {
+				// We can't really tell when we're done receiving peers, so we stop either
+				// when we get a smaller-than-normal set size or when we've received too
+				// many unrelated messages.
+
+				// bo := backoff.NewExponentialBackOff()
+				// bo.InitialInterval = time.Second
+				// bo.MaxInterval = 3 * time.Second
+				// bo.MaxElapsedTime = time.Minute
+
+				if len(otherMessages) > tolerateMessages {
+					log.WithField("address", addrInfo).WithField("num_peers", len(neighbours)).WithField("otherMessages", otherMessages).Debugf("Giving up with results after tolerating messages")
+					break
+				}
+
+				msg, _, err := c.ReadMessage()
+				if err != nil {
+					otherMessages = append(otherMessages, err.Error())
+					// log.WithField("address", addrInfo).WithField("num_peers", len(neighbours)).WithField("err", err).WithField("otherMessages", otherMessages).Warningf("Giving up with results after tolerating messages: .")
+					log.Warningf("[%s] Failed to read message: %v", pi.Addr, err)
+					continue
+				}
+
+				switch tmsg := msg.(type) {
+				case *wire.MsgAddr:
+					// neighbours = append(neighbours, tmsg.AddrList...)
+					neighbours = append(neighbours, func() []PeerInfo {
+						mapped := make([]PeerInfo, len(tmsg.AddrList))
+						for i, addr := range tmsg.AddrList {
+							maStr := fmt.Sprintf("/ip4/%s/tcp/%d", addr.IP.String(), addr.Port)
+							maddr, err := ma.NewMultiaddr(maStr)
+							if err != nil {
+								continue // Skip invalid addresses
+							}
+
+							mapped[i] = PeerInfo{
+								AddrInfo: AddrInfo{
+									id:   maddr.String(),
+									Addr: []ma.Multiaddr{maddr},
+								},
+							}
+						}
+						return mapped
+					}()...)
+
+					if firstReceived == -1 {
+						firstReceived = len(tmsg.AddrList)
+					} else if firstReceived > len(tmsg.AddrList) || firstReceived == 0 {
+						// Probably done.
+						break
+					}
+				default:
+					otherMessages = append(otherMessages, tmsg.Command())
+					// log.WithField("tmsg", tmsg.Command()).Infoln("Found other message")
+				}
+
+				// sleepDur := bo.NextBackOff()
+				// if sleepDur == backoff.Stop {
+				// 	log.WithError(err).Debugln("Exceeded retries to find to find peers", pi.id)
+				// 	break
+				// }
+				// time.Sleep(sleepDur)
+				// log.Println("Retrying...")
+			}
 		} else {
 			result.Error = result.ConnectError
+		}
+
+		if len(neighbours) > 0 {
+			log.Println("SUCCESSS!!!!!!!!!!!!!!!!!")
+			// for _, neigh := range neighbours {
+			// 	log.Println(neigh)
+			// }
+		} else {
+			log.Println("Fail!")
 		}
 
 		result.RoutingTable = &core.RoutingTable[PeerInfo]{
@@ -300,7 +339,7 @@ func (c *Crawler) Handshake() (BitcoinNodeResult, error) {
 		return result, fmt.Errorf("Peer is not connected, can't handshake.")
 	}
 
-	log.WithField("Address", c.conn.RemoteAddr()).Debug("[%s] Starting handshake.")
+	log.WithField("Address", c.conn.RemoteAddr()).Debug("Starting handshake.")
 
 	nonce, err := wire.RandomUint64()
 	if err != nil {
@@ -332,7 +371,7 @@ func (c *Crawler) Handshake() (BitcoinNodeResult, error) {
 	}
 	vmsg, ok := msg.(*wire.MsgVersion)
 	if !ok {
-		return result, fmt.Errorf("Did not receive version message: %T", vmsg)
+		return result, fmt.Errorf("did not receive version message: %T", vmsg)
 	}
 
 	result.ProtocolVersion = vmsg.ProtocolVersion
