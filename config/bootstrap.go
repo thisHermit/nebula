@@ -334,7 +334,7 @@ var (
 		"/dns/pactus-bootstrap1.dezh.tech/tcp/21888/p2p/12D3KooWK1z7QAskVrQd98r98UMSPwTLr4out8B9NkQTrCdZPCZx",
 	}
 
-	BootstrapPeersBitcoinFullNode = []string{
+	BootstrapPeersBitcoinDNSSeeds = []string{
 		"seed.bitcoin.sipa.be",
 		"dnsseed.bluematt.me",
 		"dnsseed.bitcoin.dashjr.org",

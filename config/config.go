@@ -507,7 +507,7 @@ func ConfigureNetwork(network string) (*cli.StringSlice, *cli.StringSlice, error
 		bootstrapPeers = cli.NewStringSlice(BootstrapPeersPactusFullNode...)
 		protocols = cli.NewStringSlice("/pactus/gossip/v1/kad/1.0.0")
 	case NetworkBitcoin:
-		bootstrapPeers = cli.NewStringSlice(BootstrapPeersBitcoinFullNode...)
+		bootstrapPeers = cli.NewStringSlice(BootstrapPeersBitcoinDNSSeeds...)
 		protocols = cli.NewStringSlice("bitcoin")
 	default:
 		return nil, nil, fmt.Errorf("unknown network identifier: %s", network)

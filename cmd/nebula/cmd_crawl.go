@@ -324,7 +324,6 @@ func CrawlAction(c *cli.Context) error {
 		return nil
 
 	case string(config.NetworkBitcoin):
-		println("Parsing bitcoin addresses")
 		bpEnodes, err := cfg.BootstrapBitcoinEntries()
 		if err != nil {
 			return err
@@ -333,7 +332,6 @@ func CrawlAction(c *cli.Context) error {
 		for _, addrInfo := range bpAddrInfos {
 			bpEnodes = append(bpEnodes, addrInfo.Addrs...)
 		}
-		println("Parsed bitcoin addresses")
 		// configure the crawl driver
 		driverCfg := &bitcoin.CrawlDriverConfig{
 			Version:        cfg.Root.Version(),

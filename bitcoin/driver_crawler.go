@@ -1,38 +1,15 @@
 package bitcoin
 
 import (
-	// "crypto/ecdsa"
-	// "crypto/elliptic"
-	// crand "crypto/rand"
-	// "errors"
 	"fmt"
-	// "io"
-	// "math"
 	"net"
-	// "net/netip"
-	// "runtime"
 	"sync"
 	"time"
 
-	// secp256k1v4 "github.com/decred/dcrd/dcrec/secp256k1/v4"
-	// ethcrypto "github.com/ethereum/go-ethereum/crypto"
-
-	// "github.com/ethereum/go-ethereum/crypto/secp256k1"
 	"github.com/ethereum/go-ethereum/p2p/discover"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 
-	// "github.com/libp2p/go-libp2p"
-	// mplex "github.com/libp2p/go-libp2p-mplex"
-	// libp2pconfig "github.com/libp2p/go-libp2p/config"
-	// "github.com/libp2p/go-libp2p/core/connmgr"
-	// "github.com/libp2p/go-libp2p/core/crypto"
-	// "github.com/libp2p/go-libp2p/core/host"
-	// "github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	// rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
-	// "github.com/libp2p/go-libp2p/p2p/muxer/yamux"
-	// "github.com/libp2p/go-libp2p/p2p/security/noise"
-	// "github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	ma "github.com/multiformats/go-multiaddr"
 	log "github.com/sirupsen/logrus"
 	"go.opentelemetry.io/otel/metric"
@@ -102,6 +79,7 @@ func (cfg *CrawlDriverConfig) CrawlerConfig() *CrawlerConfig {
 		AddrDialType: cfg.AddrDialType,
 		KeepENR:      cfg.KeepENR,
 		LogErrors:    cfg.LogErrors,
+		Version:      cfg.Version,
 	}
 }
 
@@ -174,7 +152,7 @@ func (d *CrawlDriver) NewWorker() (core.Worker[PeerInfo, core.CrawlResult[PeerIn
 		log.Warnln("Failed to set read buffer size on UDP listener", err)
 	}
 
-	rcvbuf, sndbuf, err := utils.GetUDPBufferSize(conn)
+	rcvbuf, sndbuf, _ := utils.GetUDPBufferSize(conn)
 	logOnce.Do(func() {
 		logEntry := log.WithFields(log.Fields{
 			"rcvbuf": rcvbuf,
